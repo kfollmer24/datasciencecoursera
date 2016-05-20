@@ -1,0 +1,119 @@
+---
+title: "Machine Learning Course Project"
+author: "KF"
+date: "May 18, 2016"
+output: html_document
+---
+
+## Introduction
+Using Machine Learning modeling techniques I can predict with a sufficent amount of accuracy the 'workout error' or 'classe' in the different exercises tracked by the 'Wearable Computing: Accerlerometers' Data Classification of Body Postures and Movements' by Ugulino, Cardador, Vega, Velloso, Milidiu and Fuks.
+
+## Process
+The process I followed was pretty iterative. At many points I would find an additional variable that could be thrown out, or way that the data needed to be cleaned.
+
+1. Read and store the data from https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+2. Use cross-validation by creating a test data from the train data. I selected a .75/.25 train vs testing size breakdown.
+3. Explore and clean the data
+    + Remove those that have zero variance.
+    + Look for strongly correlated variables to determine if one of the two can be removed from the dataset
+4. Test out machine learning models.
+    + Once a model is found that is of acceptable accuracy, apply it to the test data set created in Step 2 to ensure that you didn't overfit.
+5. Apply the model to the dataset where the classe is unknown and to be predicted.
+
+#### 1. Read data. An important step here was to account for special na.values by setting na.string = c(".","#DIV/0!", "", "NA")
+```{r, echo = FALSE, warning = FALSE}
+library(caret)
+train <- read.csv("/Users/karafollmer/Downloads/pml-training.csv", na.string = c(".","#DIV/0!", "", "NA"), sep = ",", stringsAsFactors = FALSE)
+test <- read.csv("/Users/karafollmer/Downloads/pml-testing.csv", na.string = c(".","#DIV/0!", "", "NA"), sep = ",", stringsAsFactors = FALSE)
+```
+#### 2. Cross-Validation
+```{r}
+inTrain <- createDataPartition(y = train$classe, p = 0.75, list = FALSE)
+train <- train[inTrain,]
+validation <- train[-inTrain,]
+```
+
+#### 3. Highlights of Data Cleaning
+First, I got a feel for the data with basic summary functions
+```{r, eval = FALSE}
+names(train)
+str(train)
+```
+After looking through the data, I decided to remove the first 7 columns and all columns with NA in the first row.
+```{r}
+train1 <- train[,8:160]
+NAflag <- train1[1,]
+NAflag2 <- !is.na(NAflag)
+train2 <- train1[,NAflag2]
+```
+
+I also chesked from variables with near zero variance, but discovered those had already been removed by my NA cleaning.
+```{r}
+nsv <- nearZeroVar(train2, saveMetrics = TRUE)
+nsv
+```
+
+Correlation Analysis: I looked for variables with correlation > 0.95, then plotted them against each other to see which seemed to be a better predictor of classe.
+```{r, echo = FALSE}
+library(gridExtra)
+M <- abs(cor(train2[,-53]))
+diag(M) <- 0
+# Which have a correlation greater than 0.95
+which(M > 0.95, arr.ind = T)
+a <- qplot(train$total_accel_belt, train$roll_belt, color = train$classe)
+b <- qplot(train$accel_belt_z, train$roll_belt, color = train$classe)
+c <- qplot(train$accel_belt_x, train$pitch_belt, color = train$classe)
+d <- qplot(train$gyros_dumbbell_z, train$accel_arm_x, color = train$classe)
+
+grid.arrange(a,b,c,d,ncol = 2)
+```
+
+Findings from looking at correlations: kick out total_accel_belt, accel_belt_z, accel_belt_x because they have another highly correlated variable that looks to be better in predicting class. Kick out gyros_dumbbell_z because of the extreme outlier.
+```{r, echo = FALSE}
+library(dplyr)
+train3 <- select(train2, -total_accel_belt, -accel_belt_z, -accel_belt_x, -gyros_dumbbell_z)
+```
+
+#### 4. Test different model fit methods.
+Tree prediction with 'rpart' was not accurate enough
+```{r}
+modFit <- train(classe ~ . , method ="rpart", data = train3)
+print(modFit$finalModel)
+plot(modFit$finalModel, uniform = TRUE, main = "Classification Tree")
+text(modFit$finalModel, use.n = TRUE, all=TRUE, cex = .8)
+predrp <- predict(modFit, train3)
+confusionMatrix(predrp, train3$classe)
+```
+
+Even though running a random forest model fit took a long time, it gave me the results I hoped for.
+```{r}
+knitr::opts_chunk$set(cache=TRUE)
+m <- train(classe~ . , method = "rf", preProcess = c("center", "scale"), data = train3)
+pred <- predict(m, train3)
+confusionMatrix(pred, train3$classe)
+```
+
+I was suspicious of the 100% accuracy, but it also worked on my test set
+```{r}
+pred <- predict(m, validation)
+confusionMatrix(pred, validation$classe)
+```
+
+#### 5. Apply it to the test data to determine the final predicted results
+``` {r}
+predict(m, test)
+```
+
+## Conclusion
+#### The Use of Cross Validation
+I used a 0.75 vs. 0.25 ratio to partition my test and training datasets.
+
+#### Out of Sample Error
+The out of sample error is very low, because the test data set has 100% accuracy as well. This is likely because of the high number of samples.
+
+#### Other Decision Points
++ I didn't use PCA because this was a scenario where I knew a linear would not make sense
++ Manipulate was useful to quickly filter through a lot of plots to try to better understand the predictor relationships
+```{r, eval = FALSE}
+manipulate(qplot(train3[,x], train3[,y], color = train3$classe), x = slider(1,49), y = slider(1,49))
+```}
